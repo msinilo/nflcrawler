@@ -90,7 +90,7 @@ def ParsePlayer(h, url, args, cellNo):
 	return score, stdDev
 
 parser = argparse.ArgumentParser(prog='NFL crawler', usage='%(prog)s [options]')
-parser.add_argument("--pos", help="Position", default='wr')
+parser.add_argument("--pos", help="Position (rb/wr/qb/k/te/kperc)", default='wr')
 parser.add_argument("--outlierweight", help="Std dev weight to remove outliers", default=1.0, type=float)
 parser.add_argument("--stddevweight", help="Std dev weight", default = 1.0, type=float)
 parser.add_argument("--lastn", help="Only consider last N samples", default = 0, type=int)
