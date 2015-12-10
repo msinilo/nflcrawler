@@ -12,8 +12,7 @@ def CalcStdDev(allPts):
 
 	return avg, stdDev
 
-
-def ParsePlayer(h, url, args, cellNo):
+def ParsePlayer(h, url, args, cellNo, bonus):
 
 	(resp_headers, content) = h.request("http://fftoday.com" + url, "GET")
 	soup = BeautifulSoup(content)
@@ -85,9 +84,89 @@ def ParsePlayer(h, url, args, cellNo):
 	avgPts, stdDev = CalcStdDev(filteredPts)
 	print("Avg: " + str(avgPts) + ", dev: " + str(stdDev))
 
-	score = avgPts - (stdDev * args.stddevweight)
+	score = avgPts - (stdDev * args.stddevweight) + bonus * 0.5
 
 	return score, stdDev
+
+def BuildGameMatrix(h, url):
+	(resp_headers, content) = h.request("http://fftoday.com" + url, "GET")
+	soup = BeautifulSoup(content)
+	cells = soup.find_all('td', 'tablehdr')
+	
+	firstCell = None
+	for c in cells:
+		if c.get_text() == "ARI":
+			firstCell = c
+			break
+
+	dataTab = firstCell.parent.parent
+	rows = dataTab.select('tr')[1:]
+	
+	gameMatrix = {}
+	for r in rows:
+		tds = r.select('td')
+		team = tds[0].get_text()
+		i = 1
+		gameMatrix[team] = []
+		while i < len(tds):
+			opp = tds[i].get_text().replace("@", "")
+			gameMatrix[team].append(opp)
+			i = i + 1
+
+	return gameMatrix
+
+def FindOpponent(gameMatrix, team, week):
+	return gameMatrix[team][week-1]
+
+def GetTeamAbbreviation(name):
+	teamMap = { "New Orleans Saints" : "NO", "New York Giants" : "NYG", "New York Jets" : "NYJ", \
+		"Tampa Bay Buccaneers" : "TB", "New England Patriots" : "NE", "San Diego Chargers" : "SD", \
+		"San Francisco 49ers" : "SF", "St. Louis Rams" : "STL", "Kansas City Chiefs" : "KC", \
+		"Green Bay Packers" : "GB" }
+
+	abbr = teamMap.get(name, "")
+	#print name + " - " + abbr
+
+	if abbr:
+		return abbr
+
+	return name[:3].upper()
+
+def BuildPointsAllowedMatrix(h, url):
+	(resp_headers, content) = h.request("http://fftoday.com" + url, "GET")
+	soup = BeautifulSoup(content)
+	dataCells = soup.find_all('td', 'sort1')
+
+	cellsPerRow = len(dataCells[0].parent.select('td'))
+
+	records = []
+
+	i = 0
+	while i < len(dataCells):
+		teamStr = dataCells[i].get_text().strip()
+		team = teamStr[teamStr.find(' ')+1:teamStr.find('vs')].strip()
+		ptsAllowed = float(dataCells[i + cellsPerRow - 1].get_text())
+
+		records.append((team, ptsAllowed))
+
+		i = i + cellsPerRow
+
+	#print records
+	med = records[len(records)/2]
+
+	return [(GetTeamAbbreviation(v[0]), v[1]-med[1]) for v in records]
+
+def FindTeamBonus(ptsAllowed, team):
+
+	print("Find team bonus: " + team)
+
+	for p in ptsAllowed:
+		if p[0] == team:
+			return p[1]
+
+	print("Not found: " + team)
+	raise 0.0
+	return 0.0
 
 parser = argparse.ArgumentParser(prog='NFL crawler', usage='%(prog)s [options]')
 parser.add_argument("--pos", help="Position (rb/wr/qb/k/te/kperc)", default='wr')
@@ -96,6 +175,7 @@ parser.add_argument("--stddevweight", help="Std dev weight", default = 1.0, type
 parser.add_argument("--lastn", help="Only consider last N samples", default = 0, type=int)
 parser.add_argument("--rejectonlyposoutliers", help="Only reject positive outliers", action='store_true')
 parser.add_argument("--minsamples", help="Min samples required", default=4, type=int)
+parser.add_argument("--week", help="Week - adjust score by opponent's score per given week", type=int)
 args = parser.parse_args()
 
 # Format: pos ID (url), index of fpts in the player's table, no of fields in the summary table
@@ -117,17 +197,28 @@ soup = BeautifulSoup(content)
 dataCells = soup.find_all('td', 'sort1')
 #print dataCells
 
+if args.week:
+	gameMatrix = BuildGameMatrix(h, "/nfl/schedule_grid_15.htm")
+	ptsAllowed = BuildPointsAllowedMatrix(h, "/stats/fantasystats.php?Season=2015&GameWeek=Season&PosID=" + str(posID) + "&Side=Allowed")
+
 i = 0
 allScores = []
 minDev = 100.0
 minDevName = ""
 while i < len(dataCells):
 	#print dataCells[i]
+	team = dataCells[i + 1].get_text().strip()
 	links = dataCells[i].find_all('a')
 	print links[0].get_text()
+	bonus = 0.0
+	if args.week:
+		opp = FindOpponent(gameMatrix, team, args.week)
+		bonus = FindTeamBonus(ptsAllowed, opp)
+		print team + " - playing " + opp + " - bonus: " + str(bonus)
+
 	href = links[0]['href']
 	#print href
-	score, stdDev = ParsePlayer(h, href, args, fptsCellNo)
+	score, stdDev = ParsePlayer(h, href, args, fptsCellNo, bonus)
 	name = links[0].get_text()
 
 	if stdDev < minDev:
